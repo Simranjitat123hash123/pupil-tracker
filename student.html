@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Pupil Dilation Tracker | Student</title>
+<title>Research Grade Pupil Tracker | Student</title>
 
 <!-- Libraries -->
 <script src="https://docs.opencv.org/4.x/opencv.js"></script>
@@ -31,23 +31,6 @@ body{
   padding:20px;
   box-shadow:0 8px 32px rgba(0,0,0,0.3);
   margin-top:20px;
-}
-input{
-  padding:10px;
-  border-radius:8px;
-  border:none;
-  width:220px;
-  font-size:14px;
-  margin-right:10px;
-}
-button{
-  padding:10px 20px;
-  border:none;
-  border-radius:8px;
-  background:linear-gradient(to right,#00c6ff,#0072ff);
-  color:white;
-  font-weight:bold;
-  cursor:pointer;
 }
 #wrap{
   position:relative;
@@ -89,10 +72,8 @@ canvas{
 </head>
 
 <body>
-
 <div class="container">
-
-<h2>Pupil Dilation Tracker | Student</h2>
+<h2>Research Grade Pupil Tracker | Student</h2>
 
 <div class="card">
   <input id="sid" placeholder="Enter Student ID">
@@ -105,7 +86,6 @@ canvas{
     <canvas id="canvas" width="960" height="720"></canvas>
     <div id="indicator" class="indicator" style="background:red;"></div>
   </div>
-
   <div class="status-box" id="status">Waiting for session...</div>
   <div class="timer-box" id="timer">Time Remaining: 30:00</div>
 </div>
@@ -113,11 +93,10 @@ canvas{
 <div class="footer">
 Intercultural Engagement Analytics | PhD Research Prototype
 </div>
-
 </div>
 
 <script>
-/******** FIREBASE ********/
+// Firebase config
 const firebaseConfig = {
   apiKey: "AIzaSyAEG2L_e4_1qzcUgBo7-zQY2PFXgaHuwwM",
   authDomain: "pupil-tracker-f2a83.firebaseapp.com",
@@ -127,23 +106,21 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-/******** GLOBAL VARIABLES ********/
+// Global variables
 let sessionActive = false;
 let studentId = null;
-let baseline = null;
-let samples = [];
-let calibrated = false;
-let lastSent = 0;
 let startTime = null;
+let SESSION_DURATION = 1800; // 30 min
+let calibrated = false;
+let samples = [];
+let baseline = null;
 let smoothRatio = null;
-const SESSION_DURATION = 1800;
 let processing = false;
+let lastSent = 0;
 
-/******** START SESSION ********/
-function startSession() {
+function startSession(){
   studentId = document.getElementById("sid").value.trim();
-  if (!studentId) { alert("Enter Student ID"); return; }
-
+  if(!studentId){ alert("Enter Student ID"); return; }
   sessionActive = true;
   startTime = Date.now();
   calibrated = false;
@@ -153,187 +130,175 @@ function startSession() {
   document.getElementById("status").innerText = "Calibrating...";
 }
 
-/******** OPENCV INIT ********/
+// OpenCV + Mediapipe
 cv['onRuntimeInitialized'] = () => {
-
   const video = document.getElementById("video");
   const canvas = document.getElementById("canvas");
   const ctx = canvas.getContext("2d");
   const indicator = document.getElementById("indicator");
 
-  navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+  navigator.mediaDevices.getUserMedia({video:true}).then(stream => {
     video.srcObject = stream;
 
     const faceMesh = new FaceMesh({
-      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
     });
-    faceMesh.setOptions({ maxNumFaces: 3, refineLandmarks: true });
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true });
 
     faceMesh.onResults(res => {
-      if (!sessionActive || processing) return;
+      if(!sessionActive || processing) return;
       processing = true;
 
-      try {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(res.image, 0, 0, canvas.width, canvas.height);
+      try{
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(res.image,0,0,canvas.width,canvas.height);
 
-        // TIMER
-        let elapsed = Math.floor((Date.now() - startTime) / 1000);
+        // Timer
+        let elapsed = Math.floor((Date.now() - startTime)/1000);
         let remaining = SESSION_DURATION - elapsed;
-        if (remaining <= 0) {
+        if(remaining<=0){ 
           sessionActive = false;
           document.getElementById("timer").innerText = "Time Remaining: 00:00";
           document.getElementById("status").innerText = "Session Completed";
-          processing = false;
+          processing=false;
           return;
         }
-        let min = Math.floor(remaining / 60).toString().padStart(2, '0');
-        let sec = (remaining % 60).toString().padStart(2, '0');
-        document.getElementById("timer").innerText = "Time Remaining: " + min + ":" + sec;
+        let min = Math.floor(remaining/60).toString().padStart(2,'0');
+        let sec = (remaining%60).toString().padStart(2,'0');
+        document.getElementById("timer").innerText = "Time Remaining: "+min+":"+sec;
 
-        // No face detected
-        if (!res.multiFaceLandmarks || res.multiFaceLandmarks.length === 0) {
-          ctx.fillStyle = "rgba(255,0,0,0.25)";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = "white";
-          ctx.font = "30px Segoe UI";
-          ctx.fillText("No face detected", canvas.width / 2 - 120, canvas.height / 2);
-          document.getElementById("status").innerText = "Face not detected...";
-          indicator.style.background = "red";
-          processing = false;
+        if(!res.multiFaceLandmarks || res.multiFaceLandmarks.length===0){
+          ctx.fillStyle="rgba(255,0,0,0.25)";
+          ctx.fillRect(0,0,canvas.width,canvas.height);
+          ctx.fillStyle="white";
+          ctx.font="30px Segoe UI";
+          ctx.fillText("No face detected",canvas.width/2-120,canvas.height/2);
+          document.getElementById("status").innerText="Face not detected...";
+          indicator.style.background="red";
+          processing=false;
           return;
         }
 
-        // Choose nearest face
-        let faces = res.multiFaceLandmarks;
-        let nearest = faces[0];
-        let minZ = Infinity;
-        for (let f of faces) {
-          let avgZ = f.reduce((sum, p) => sum + p.z, 0) / f.length;
-          if (avgZ < minZ) { minZ = avgZ; nearest = f; }
-        }
+        let lm = res.multiFaceLandmarks[0];
+        const leftIris=[468,469,470,471,472];
+        const rightIris=[473,474,475,476,477];
 
-        let lm = nearest;
-        const leftIris = [468, 469, 470, 471, 472];
-        const rightIris = [473, 474, 475, 476, 477];
-
-        function irisData(ids) {
-          let xs = [], ys = [];
-          ids.forEach(i => {
-            if (lm[i]) {
-              xs.push(lm[i].x * canvas.width);
-              ys.push(lm[i].y * canvas.height);
+        function irisData(ids){
+          let xs=[], ys=[];
+          ids.forEach(i=>{
+            if(lm[i]){
+              xs.push(lm[i].x*canvas.width);
+              ys.push(lm[i].y*canvas.height);
             }
           });
-          if (xs.length < 3) return null;
-          let cx = xs.reduce((a, b) => a + b) / xs.length;
-          let cy = ys.reduce((a, b) => a + b) / ys.length;
-          let r = (Math.max(...xs) - Math.min(...xs)) / 2;
-          return { cx, cy, r };
+          if(xs.length<3) return null;
+          let cx=xs.reduce((a,b)=>a+b)/xs.length;
+          let cy=ys.reduce((a,b)=>a+b)/ys.length;
+          let r=(Math.max(...xs)-Math.min(...xs))/2;
+          return {cx,cy,r};
         }
 
-        function detect(data) {
-          if (!data || !data.r) return null;
-          let size = Math.round(data.r * 3.8);
-          if (size < 25) return null;
-
-          let x = Math.round(data.cx - size / 2);
-          let y = Math.round(data.cy - size / 2);
-          x = Math.max(0, Math.min(canvas.width - size, x));
-          y = Math.max(0, Math.min(canvas.height - size, y));
+        function detectPupil(data){
+          if(!data || !data.r) return null;
+          let size = Math.round(data.r*3.8);
+          if(size<25) return null;
+          let x = Math.max(0, Math.min(canvas.width-size, Math.round(data.cx-size/2)));
+          let y = Math.max(0, Math.min(canvas.height-size, Math.round(data.cy-size/2)));
 
           let src = cv.imread(canvas);
-          let roi = src.roi(new cv.Rect(x, y, size, size));
+          let roi = src.roi(new cv.Rect(x,y,size,size));
           let gray = new cv.Mat();
-          cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
-
-          let clahe = new cv.CLAHE(3.0, new cv.Size(8, 8));
-          clahe.apply(gray, gray);
-          cv.GaussianBlur(gray, gray, new cv.Size(3, 3), 0);
-
+          cv.cvtColor(roi,gray,cv.COLOR_RGBA2GRAY);
+          let clahe = new cv.CLAHE(3.0,new cv.Size(8,8));
+          clahe.apply(gray,gray);
+          cv.GaussianBlur(gray,gray,new cv.Size(3,3),0);
           let thresh = new cv.Mat();
-          cv.adaptiveThreshold(gray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv.THRESH_BINARY_INV, 15, 2);
+          cv.adaptiveThreshold(gray,thresh,255,cv.ADAPTIVE_THRESH_GAUSSIAN_C,cv.THRESH_BINARY_INV,15,2);
 
           let contours = new cv.MatVector();
           let hierarchy = new cv.Mat();
-          cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+          cv.findContours(thresh,contours,hierarchy,cv.RETR_EXTERNAL,cv.CHAIN_APPROX_SIMPLE);
 
-          let best = null, maxArea = 0;
-          for (let i = 0; i < contours.size(); i++) {
-            let cnt = contours.get(i);
-            let area = cv.contourArea(cnt);
-            if (area > maxArea) {
-              let circle = cv.minEnclosingCircle(cnt);
-              if (circle.radius < data.r * 1.5 && circle.radius > data.r * 0.1) {
-                maxArea = area;
-                best = { r: circle.radius, cx: circle.center.x + x, cy: circle.center.y + y };
+          let best=null,maxArea=0;
+          for(let i=0;i<contours.size();i++){
+            let cnt=contours.get(i);
+            let area=cv.contourArea(cnt);
+            if(area>maxArea){
+              let circle=cv.minEnclosingCircle(cnt);
+              if(circle.radius<data.r*1.5 && circle.radius>data.r*0.1){
+                maxArea=area;
+                best={r:circle.radius, cx:circle.center.x+x, cy:circle.center.y+y};
               }
             }
             cnt.delete();
           }
-
-          roi.delete(); gray.delete(); thresh.delete();
-          contours.delete(); hierarchy.delete(); src.delete();
-
-          if (!best && data.r < 70) {
-            data.r *= 1.2;
-            return detect(data);
-          }
-
+          roi.delete(); gray.delete(); thresh.delete(); contours.delete(); hierarchy.delete(); src.delete();
           return best;
         }
 
-        function process(ids, color) {
-          let iris = irisData(ids);
-          if (!iris) return null;
+        function drawCrosshair(cx,cy,size=5,color="lime"){
+          ctx.strokeStyle=color;
+          ctx.lineWidth=2;
           ctx.beginPath();
-          ctx.arc(iris.cx, iris.cy, iris.r + 2, 0, 2 * Math.PI);
-          ctx.strokeStyle = color;
+          ctx.moveTo(cx-size, cy);
+          ctx.lineTo(cx+size, cy);
+          ctx.moveTo(cx, cy-size);
+          ctx.lineTo(cx, cy+size);
           ctx.stroke();
-          return { iris, pupil: detect({ ...iris }) };
         }
 
-        let L = process(leftIris, "yellow");
-        let R = process(rightIris, "yellow");
+        function processEye(ids, color){
+          let iris = irisData(ids);
+          if(!iris) return null;
+          ctx.beginPath();
+          ctx.arc(iris.cx, iris.cy, iris.r+2, 0, 2*Math.PI);
+          ctx.strokeStyle=color;
+          ctx.lineWidth=3;
+          ctx.stroke();
+          let pupil = detectPupil({...iris});
+          if(pupil){
+            ctx.beginPath();
+            ctx.arc(pupil.cx,pupil.cy,pupil.r,0,2*Math.PI);
+            ctx.strokeStyle="red";
+            ctx.lineWidth=3;
+            ctx.stroke();
+            ctx.fillStyle="rgba(255,0,0,0.2)";
+            ctx.beginPath();
+            ctx.arc(pupil.cx,pupil.cy,pupil.r,0,2*Math.PI);
+            ctx.fill();
+
+            // Draw crosshair
+            drawCrosshair(pupil.cx,pupil.cy,5,"lime");
+          }
+          return {iris,pupil};
+        }
+
+        let L=processEye(leftIris,"yellow");
+        let R=processEye(rightIris,"yellow");
         let eyesDetected = L && L.pupil && R && R.pupil;
 
-        if (eyesDetected) {
-          indicator.style.background = "limegreen";
-          let ratio = ((L.pupil.r / L.iris.r) + (R.pupil.r / R.iris.r)) / 2;
-          if (smoothRatio == null) smoothRatio = ratio;
-          smoothRatio = 0.7 * smoothRatio + 0.3 * ratio;
-          ratio = smoothRatio;
+        if(eyesDetected){
+          indicator.style.background="limegreen";
+          let ratio = ((L.pupil.r/L.iris.r)+(R.pupil.r/R.iris.r))/2;
+          if(smoothRatio==null) smoothRatio=ratio;
+          smoothRatio=0.7*smoothRatio+0.3*ratio;
+          ratio=smoothRatio;
 
-          if (!calibrated) {
+          if(!calibrated){
             samples.push(ratio);
-            if (samples.length > 40) {
-              baseline = samples.reduce((a, b) => a + b) / samples.length;
+            if(samples.length>40){
+              baseline = samples.reduce((a,b)=>a+b)/samples.length;
               calibrated = true;
             }
           }
 
-          let change = calibrated ? ((ratio - baseline) / baseline) * 100 : 0;
+          let change = calibrated ? ((ratio-baseline)/baseline)*100 : 0;
+          document.getElementById("status").innerText = "Normalized Dilation: "+ratio.toFixed(3)+
+            (calibrated?" | Change: "+change.toFixed(2)+"%":" | Calibrating...");
 
-          ctx.lineWidth = 6;
-          ctx.strokeStyle = "limegreen";
-          ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20);
-
-          ctx.beginPath();
-          ctx.arc(L.pupil.cx, L.pupil.cy, L.pupil.r, 0, 2 * Math.PI);
-          ctx.strokeStyle = "red";
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.arc(R.pupil.cx, R.pupil.cy, R.pupil.r, 0, 2 * Math.PI);
-          ctx.stroke();
-
-          document.getElementById("status").innerText =
-            "Normalized Dilation: " + ratio.toFixed(3) +
-            (calibrated ? " | Change: " + change.toFixed(2) + "%" : " | Calibrating...");
-
-          if (calibrated && Date.now() - lastSent > 1000) {
-            lastSent = Date.now();
-            db.ref("pupilData/" + studentId + "/" + Date.now()).set({
+          if(calibrated && Date.now()-lastSent>1000){
+            lastSent=Date.now();
+            db.ref("pupilData/"+studentId+"/"+Date.now()).set({
               studentId,
               normalizedRatio: ratio,
               baseline,
@@ -344,27 +309,21 @@ cv['onRuntimeInitialized'] = () => {
           }
 
         } else {
-          indicator.style.background = "red";
-          ctx.fillStyle = "rgba(255,0,0,0.15)";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = "white";
-          ctx.font = "26px Segoe UI";
-          ctx.fillText("Eyes not detected (adjust distance)", canvas.width / 2 - 200, canvas.height / 2);
-          document.getElementById("status").innerText = "Eyes not detected...";
+          indicator.style.background="red";
+          ctx.fillStyle="rgba(255,0,0,0.15)";
+          ctx.fillRect(0,0,canvas.width,canvas.height);
+          ctx.fillStyle="white";
+          ctx.font="26px Segoe UI";
+          ctx.fillText("Eyes not detected (adjust distance)",canvas.width/2-200,canvas.height/2);
+          document.getElementById("status").innerText="Eyes not detected...";
         }
 
-      } catch (err) {
+      } catch(err){
         console.error(err);
-      } finally {
-        processing = false;
-      }
+      } finally{ processing=false; }
     });
 
-    const cam = new Camera(video, {
-      onFrame: async () => { await faceMesh.send({ image: video }); },
-      width: 960,
-      height: 720
-    });
+    const cam = new Camera(video,{onFrame:async()=>await faceMesh.send({image:video}),width:960,height:720});
     cam.start();
   });
 };
