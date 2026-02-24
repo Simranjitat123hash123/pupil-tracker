@@ -58,6 +58,8 @@ th {
 tr:nth-child(even) { background:rgba(255,255,255,0.05); }
 .status-active { color:#00ff9d; font-weight:bold; }
 .status-inactive { color:#ff4d4d; font-weight:bold; }
+.engaged { color:#00ff9d; font-weight:bold; }
+.not-engaged { color:#ffae42; font-weight:bold; }
 .footer {
   margin-top:25px;
   font-size:13px;
@@ -80,8 +82,8 @@ tr:nth-child(even) { background:rgba(255,255,255,0.05); }
       <tr>
         <th>Student ID</th>
         <th>Connection Status</th>
-        <th>Dilated Minutes ≥ 25%</th>
-        <th>Dilated Minutes < 25%</th>
+        <th>Engaged (≥ 25 %) min</th>
+        <th>Less Engaged (&lt; 25 %) min</th>
       </tr>
     </table>
 
@@ -96,145 +98,105 @@ tr:nth-child(even) { background:rgba(255,255,255,0.05); }
 <script>
 /******** FIREBASE INIT ********/
 const firebaseConfig = {
-  apiKey: "AIzaSyAEG2L_e4_1qzcUgBo7-zQY2PFXgaHuwwM",
-  authDomain: "pupil-tracker-f2a83.firebaseapp.com",
-  databaseURL: "https://pupil-tracker-f2a83-default-rtdb.firebaseio.com",
-  projectId: "pupil-tracker-f2a83"
+  apiKey:"AIzaSyAEG2L_e4_1qzcUgBo7-zQY2PFXgaHuwwM",
+  authDomain:"pupil-tracker-f2a83.firebaseapp.com",
+  databaseURL:"https://pupil-tracker-f2a83-default-rtdb.firebaseio.com",
+  projectId:"pupil-tracker-f2a83"
 };
 firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
+const db=firebase.database();
 
-let autoRefresh = null;
+let autoRefresh=null, loading=false;
 
 /******** LOAD STUDENTS ********/
-function loadStudents() {
-  const table = document.getElementById("tbl");
-  const statusMsg = document.getElementById("statusMsg");
-
-  // Keep header row visible
-  table.innerHTML = `
+function loadStudents(){
+  if(loading) return;
+  loading=true;
+  const table=document.getElementById("tbl");
+  const statusMsg=document.getElementById("statusMsg");
+  table.innerHTML=`
     <tr>
       <th>Student ID</th>
       <th>Connection Status</th>
-      <th>Dilated Minutes ≥ 25%</th>
-      <th>Dilated Minutes < 25%</th>
+      <th>Engaged (≥ 25 %) min</th>
+      <th>Less Engaged (&lt; 25 %) min</th>
     </tr>`;
 
-  db.ref("pupilData").once("value").then(snap => {
-    if (!snap.exists()) {
-      statusMsg.textContent = "⚠️ No student data available.";
-      return;
-    }
-
-    let allOffline = true;
-
-    snap.forEach(studentSnap => {
-      const sid = studentSnap.key;
-
-      // Collect entries into array and clean data
-      const entries = [];
-      studentSnap.forEach(child => {
-        const v = child.val();
-        if (!v || typeof v.timestamp === 'undefined' || typeof v.changePercent === 'undefined') return;
-
-        let ts = Number(v.timestamp);
-        if (ts < 1e12) ts *= 1000; // convert seconds → ms if needed
-
-        entries.push({ timestamp: ts, changePercent: Number(v.changePercent) });
+  db.ref("pupilData").once("value").then(snap=>{
+    if(!snap.exists()){statusMsg.textContent="⚠️ No student data available.";loading=false;return;}
+    let allOffline=true;
+    snap.forEach(studentSnap=>{
+      const sid=studentSnap.key;
+      const entries=[];
+      studentSnap.forEach(child=>{
+        const v=child.val();
+        if(!v||v.changePercent==null||v.timestamp==null)return;
+        entries.push({t:+v.timestamp,c:+v.changePercent});
       });
-
-      if (entries.length === 0) {
-        const row = document.createElement("tr");
-        row.innerHTML = `<td>${sid}</td><td class="status-inactive">Offline</td><td>0.00</td><td>0.00</td>`;
-        table.appendChild(row);
+      if(entries.length===0){
+        addRow(sid,false,0,0);
         return;
       }
-
-      // Sort ascending by time
-      entries.sort((a,b)=>a.timestamp - b.timestamp);
-
-      let totalAbove = 0, totalBelow = 0;
-      for (let i = 1; i < entries.length; i++) {
-        const prev = entries[i-1];
-        const cur = entries[i];
-        let diff = cur.timestamp - prev.timestamp;
-
-        // Ignore unrealistic gaps (>60s or negative)
-        if (diff <= 0 || diff > 60000) continue;
-
-        if (cur.changePercent >= 25) totalAbove += diff;
-        else totalBelow += diff;
+      entries.sort((a,b)=>a.t-b.t);
+      let up=0,down=0;
+      for(let i=1;i<entries.length;i++){
+        const diff=entries[i].t-entries[i-1].t;
+        if(diff<=0||diff>2000)continue;
+        (entries[i].c>=23)?up+=diff:down+=diff;
       }
-
-      const minAbove = (totalAbove / 60000).toFixed(2);
-      const minBelow = (totalBelow / 60000).toFixed(2);
-      const lastTimestamp = entries[entries.length - 1].timestamp;
-      const isActive = (Date.now() - lastTimestamp) < 10000;
-      const statusText = isActive ? "Connected" : "Offline";
-      const statusClass = isActive ? "status-active" : "status-inactive";
-
-      if (isActive) allOffline = false;
-
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td>${sid}</td>
-        <td class="${statusClass}">${statusText}</td>
-        <td>${minAbove}</td>
-        <td style="color:#ffae42;font-weight:bold">${minBelow}</td>
-      `;
-      table.appendChild(row);
+      const mUp=(up/60000).toFixed(2),mDown=(down/60000).toFixed(2);
+      const last=entries.at(-1).t;
+      const active=(Date.now()-last)<15000;
+      addRow(sid,active,mUp,mDown);
+      if(active)allOffline=false;
     });
+    statusMsg.textContent=allOffline?"All students offline.":"";
+  }).catch(e=>{
+    console.error(e);
+    statusMsg.textContent="❌ Error loading data.";
+  }).finally(()=>loading=false);
+}
 
-    if (allOffline) {
-      stopAutoRefresh();
-      statusMsg.textContent = "";
-    } else {
-      statusMsg.textContent = "";
-    }
-  }).catch(err => {
-    console.error(err);
-    statusMsg.textContent = "❌ Error loading data.";
-  });
+function addRow(sid,active,mUp,mDown){
+  const table=document.getElementById("tbl");
+  const row=document.createElement("tr");
+  row.innerHTML=`
+    <td>${sid}</td>
+    <td class="${active?"status-active":"status-inactive"}">${active?"Connected":"Offline"}</td>
+    <td class="${mUp>0?"engaged":"not-engaged"}">${mUp}</td>
+    <td class="not-engaged">${mDown}</td>`;
+  table.appendChild(row);
 }
 
 /******** RESET DATABASE ********/
-function resetDatabase() {
-  if (!confirm("Are you sure you want to reset all student data?")) return;
+function resetDatabase(){
+  if(!confirm("Are you sure you want to reset all student data?"))return;
+  stopAutoRefresh();
   db.ref("pupilData").remove()
-    .then(() => {
-      alert("All data has been reset successfully.");
-      loadStudents();
-    })
-    .catch(error => alert("Error resetting data: " + error));
+  .then(()=>{alert("✅ All data reset successfully.");loadStudents();startAutoRefresh();})
+  .catch(err=>alert("Error resetting: "+err));
 }
 
 /******** EXPORT TO EXCEL ********/
-function exportToExcel() {
-  const table = document.getElementById("tbl");
-  if (!table || table.rows.length === 1) {
-    alert("No data available to export.");
-    return;
-  }
-  const wb = XLSX.utils.table_to_book(table, { sheet: "Pupil Data" });
-  XLSX.writeFile(wb, "TeacherDashboard.xlsx");
+function exportToExcel(){
+  const tbl=document.getElementById("tbl");
+  if(tbl.rows.length<=1){alert("No data to export.");return;}
+  const wb=XLSX.utils.table_to_book(tbl,{sheet:"Pupil Data"});
+  XLSX.writeFile(wb,"TeacherDashboard.xlsx");
 }
 
-/******** AUTO REFRESH CONTROL ********/
-function startAutoRefresh() {
-  if (!autoRefresh) autoRefresh = setInterval(loadStudents, 5000);
+/******** AUTO REFRESH ********/
+function startAutoRefresh(){
+  if(!autoRefresh)autoRefresh=setInterval(loadStudents,7000);
 }
-function stopAutoRefresh() {
-  if (autoRefresh) {
-    clearInterval(autoRefresh);
-    autoRefresh = null;
-    console.log("Auto refresh stopped.");
-  }
+function stopAutoRefresh(){
+  if(autoRefresh){clearInterval(autoRefresh);autoRefresh=null;}
 }
 
-/******** INITIALIZE BUTTONS ********/
-document.getElementById("exportBtn").onclick = exportToExcel;
-document.getElementById("refreshBtn").onclick = loadStudents;
-document.getElementById("resetBtn").onclick = resetDatabase;
+/******** INIT ********/
+document.getElementById("exportBtn").onclick=exportToExcel;
+document.getElementById("refreshBtn").onclick=loadStudents;
+document.getElementById("resetBtn").onclick=resetDatabase;
 
 loadStudents();
 startAutoRefresh();
