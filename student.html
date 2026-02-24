@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pupil Dilation Tracker</title>
+
+<script src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<style>
+body{
+  margin:0;
+  font-family:'Segoe UI',Arial,sans-serif;
+  background:linear-gradient(135deg,#1e3c72,#2a5298);
+  color:white;
+  text-align:center;
+}
+.container{
+  max-width:1100px;
+  margin:auto;
+  padding:20px;
+}
+.card{
+  background:rgba(255,255,255,0.1);
+  backdrop-filter:blur(10px);
+  border-radius:15px;
+  padding:20px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  margin-top:20px;
+}
+input{
+  padding:10px;
+  border-radius:8px;
+  border:none;
+  width:220px;
+  font-size:14px;
+  margin-right:10px;
+}
+button{
+  padding:10px 20px;
+  border:none;
+  border-radius:8px;
+  background:linear-gradient(to right,#00c6ff,#0072ff);
+  color:white;
+  font-weight:bold;
+  cursor:pointer;
+}
+#wrap{
+  position:relative;
+  display:inline-block;
+  margin-top:15px;
+}
+video,canvas{
+  border-radius:12px;
+}
+canvas{
+  position:absolute;
+  left:0;
+  top:0;
+}
+.status-box{
+  margin-top:15px;
+  font-size:18px;
+}
+.timer-box{
+  margin-top:5px;
+  font-size:18px;
+  font-weight:bold;
+}
+.footer{
+  margin-top:25px;
+  font-size:13px;
+  opacity:0.7;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h2>Pupil Dilation Tracker</h2>
+
+<div class="card">
+  <input id="sid" placeholder="Enter Student ID">
+  <button onclick="startSession()">Start Session</button>
+</div>
+
+<div class="card">
+  <div id="wrap">
+    <video id="video" width="960" height="720" autoplay muted playsinline></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+  </div>
+
+  <div class="status-box" id="status">Waiting for session...</div>
+  <div class="timer-box" id="timer">Time Remaining: 30:00</div>
+</div>
+
+<div class="footer">
+Intercultural Engagement Analytics | PhD Research Prototype
+</div>
+
+</div>
+
+<script>
+
+/******** FIREBASE ********/
+const firebaseConfig={
+  apiKey:"AIzaSyAEG2L_e4_1qzcUgBo7-zQY2PFXgaHuwwM",
+ authDomain:"pupil-tracker-f2a83.firebaseapp.com",
+ databaseURL:"https://pupil-tracker-f2a83-default-rtdb.firebaseio.com",
+ projectId:"pupil-tracker-f2a83"
+
+};
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+
+/******** GLOBAL VARIABLES ********/
+let sessionActive=false;
+let studentId=null;
+let baseline=null;
+let samples=[];
+let calibrated=false;
+let lastSent=0;
+let startTime=null;
+let smoothRatio=null;
+
+const SESSION_DURATION = 1800; // 30 minutes in seconds
+
+/******** START SESSION ********/
+function startSession(){
+ studentId=document.getElementById("sid").value.trim();
+ if(!studentId){alert("Enter Student ID");return;}
+
+ sessionActive=true;
+ startTime=Date.now();
+}
+
+/******** OPENCV INIT ********/
+cv['onRuntimeInitialized']=()=>{
+
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+
+navigator.mediaDevices.getUserMedia({video:true})
+.then(stream=>{
+ video.srcObject=stream;
+
+ const faceMesh=new FaceMesh({
+  locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+ });
+
+ faceMesh.setOptions({
+  maxNumFaces:1,
+  refineLandmarks:true
+ });
+
+ faceMesh.onResults(res=>{
+
+ if(!sessionActive) return;
+
+ let elapsed = Math.floor((Date.now()-startTime)/1000);
+ let remaining = SESSION_DURATION - elapsed;
+
+ if(remaining <= 0){
+   sessionActive=false;
+   document.getElementById("timer").innerText="Time Remaining: 00:00";
+   document.getElementById("status").innerText="Session Completed";
+   return;
+ }
+
+ let min=Math.floor(remaining/60).toString().padStart(2,'0');
+ let sec=(remaining%60).toString().padStart(2,'0');
+ document.getElementById("timer").innerText=
+   "Time Remaining: "+min+":"+sec;
+
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ ctx.drawImage(res.image,0,0,canvas.width,canvas.height);
+ if(!res.multiFaceLandmarks) return;
+
+ let lm=res.multiFaceLandmarks[0];
+ let leftIris=[468,469,470,471,472];
+ let rightIris=[473,474,475,476,477];
+
+ function irisData(ids){
+  let xs=[], ys=[];
+  ids.forEach(i=>{
+   xs.push(lm[i].x*canvas.width);
+   ys.push(lm[i].y*canvas.height);
+  });
+  let cx=xs.reduce((a,b)=>a+b)/xs.length;
+  let cy=ys.reduce((a,b)=>a+b)/ys.length;
+  let r=(Math.max(...xs)-Math.min(...xs))/2;
+  return {cx,cy,r};
+ }
+
+ function detect(data){
+
+  let size=Math.round(data.r*3.0);
+  if(size<30) return null;
+
+  let x=Math.round(data.cx-size/2);
+  let y=Math.round(data.cy-size/2);
+  x=Math.max(0,Math.min(canvas.width-size,x));
+  y=Math.max(0,Math.min(canvas.height-size,y));
+
+  let src=cv.imread(canvas);
+  let roi=src.roi(new cv.Rect(x,y,size,size));
+
+  let gray=new cv.Mat();
+  cv.cvtColor(roi,gray,cv.COLOR_RGBA2GRAY);
+
+  let clahe=new cv.CLAHE(2.0,new cv.Size(8,8));
+  clahe.apply(gray,gray);
+
+  cv.GaussianBlur(gray,gray,new cv.Size(5,5),0);
+
+  let thresh=new cv.Mat();
+  cv.adaptiveThreshold(
+    gray,thresh,255,
+    cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+    cv.THRESH_BINARY_INV,
+    21,4
+  );
+
+  let contours=new cv.MatVector();
+  let hierarchy=new cv.Mat();
+  cv.findContours(thresh,contours,hierarchy,
+                  cv.RETR_EXTERNAL,
+                  cv.CHAIN_APPROX_SIMPLE);
+
+  let best=null;
+  let maxArea=0;
+
+  for(let i=0;i<contours.size();i++){
+    let cnt=contours.get(i);
+    let area=cv.contourArea(cnt);
+    if(area>maxArea){
+      let circle=cv.minEnclosingCircle(cnt);
+      if(circle.radius<data.r*1.2 &&
+         circle.radius>data.r*0.15){
+        maxArea=area;
+        best={
+          r:circle.radius,
+          cx:circle.center.x+x,
+          cy:circle.center.y+y
+        };
+      }
+    }
+    cnt.delete();
+  }
+
+  roi.delete();gray.delete();thresh.delete();
+  contours.delete();hierarchy.delete();src.delete();
+
+  return best;
+ }
+
+ function process(ids){
+  let iris=irisData(ids);
+  ctx.beginPath();
+  ctx.arc(iris.cx,iris.cy,iris.r+2,0,2*Math.PI);
+  ctx.strokeStyle="yellow";
+  ctx.stroke();
+  return {iris,pupil:detect(iris)};
+ }
+
+ let L=process(leftIris);
+ let R=process(rightIris);
+
+ if(L.pupil && R.pupil){
+
+  let ratio=((L.pupil.r/L.iris.r)+(R.pupil.r/R.iris.r))/2;
+
+  if(smoothRatio==null) smoothRatio=ratio;
+  smoothRatio=0.7*smoothRatio+0.3*ratio;
+  ratio=smoothRatio;
+
+  if(!calibrated){
+    samples.push(ratio);
+    if(samples.length>40){
+      baseline=samples.reduce((a,b)=>a+b)/samples.length;
+      calibrated=true;
+    }
+  }
+
+  let change=calibrated?
+    ((ratio-baseline)/baseline)*100:0;
+
+  ctx.beginPath();
+  ctx.arc(L.pupil.cx,L.pupil.cy,L.pupil.r,0,2*Math.PI);
+  ctx.strokeStyle="red";
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(R.pupil.cx,R.pupil.cy,R.pupil.r,0,2*Math.PI);
+  ctx.stroke();
+
+  document.getElementById("status").innerText=
+    "Normalized Dilation: "+ratio.toFixed(3)+
+    (calibrated?" | Change: "+change.toFixed(2)+"%":" | Calibrating...");
+
+  if(calibrated && Date.now()-lastSent>1000){
+    lastSent=Date.now();
+    db.ref("pupilData/"+studentId+"/"+Date.now()).set({
+      studentId,
+      normalizedRatio:ratio,
+      baseline,
+      changePercent:change,
+      timeRemaining:remaining,
+      timestamp:Date.now()
+    });
+  }
+
+ }
+
+ });
+
+ const cam=new Camera(video,{
+  onFrame:async()=>{await faceMesh.send({image:video});},
+  width:960,height:720
+ });
+ cam.start();
+
+});
+
+};
+</script>
+
+</body>
+</html>

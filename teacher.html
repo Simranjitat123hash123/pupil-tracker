@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pupil Dilation Tracker - Teacher Dashboard</title>
+
+<!-- Firebase + XLSX -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body {
+  margin:0;
+  font-family:'Segoe UI',Arial,sans-serif;
+  background:linear-gradient(135deg,#1e3c72,#2a5298);
+  color:white;
+  text-align:center;
+}
+.container {
+  max-width:1200px;
+  margin:auto;
+  padding:30px;
+}
+.card {
+  background:rgba(255,255,255,0.1);
+  backdrop-filter:blur(10px);
+  border-radius:16px;
+  padding:25px;
+  box-shadow:0 8px 32px rgba(0,0,0,0.3);
+  margin-top:20px;
+}
+h2 { font-weight:600; letter-spacing:1px; }
+button {
+  padding:10px 20px;
+  border:none;
+  border-radius:8px;
+  background:linear-gradient(to right,#00c6ff,#0072ff);
+  color:white;
+  font-weight:bold;
+  cursor:pointer;
+  margin:8px;
+  transition:0.3s;
+}
+button:hover { transform:scale(1.05); }
+.reset-btn { background:linear-gradient(to right,#ff4d4d,#cc0000); }
+table {
+  width:100%;
+  border-collapse:collapse;
+  margin-top:10px;
+  color:white;
+}
+th, td { padding:14px; text-align:center; }
+th {
+  background:rgba(255,255,255,0.15);
+  font-weight:600;
+}
+tr:nth-child(even) { background:rgba(255,255,255,0.05); }
+.status-active { color:#00ff9d; font-weight:bold; }
+.status-inactive { color:#ff4d4d; font-weight:bold; }
+.footer {
+  margin-top:25px;
+  font-size:13px;
+  opacity:0.7;
+}
+#statusMsg { margin-top:10px; font-style:italic; color:#00ff9d; }
+</style>
+</head>
+
+<body>
+<div class="container">
+  <h2>Pupil Dilation Tracker – Teacher Dashboard</h2>
+
+  <div class="card">
+    <button id="exportBtn">Export to Excel</button>
+    <button id="refreshBtn">Refresh Now</button>
+    <button class="reset-btn" id="resetBtn">Reset All Data</button>
+
+    <table id="tbl">
+      <tr>
+        <th>Student ID</th>
+        <th>Connection Status</th>
+        <th>Dilated Minutes ≥ 25%</th>
+        <th>Dilated Minutes < 25%</th>
+      </tr>
+    </table>
+
+    <p id="statusMsg"></p>
+  </div>
+
+  <div class="footer">
+    Intercultural Engagement Analytics | PhD Research Prototype
+  </div>
+</div>
+
+<script>
+/******** FIREBASE INIT ********/
+const firebaseConfig = {
+  apiKey: "AIzaSyAEG2L_e4_1qzcUgBo7-zQY2PFXgaHuwwM",
+  authDomain: "pupil-tracker-f2a83.firebaseapp.com",
+  databaseURL: "https://pupil-tracker-f2a83-default-rtdb.firebaseio.com",
+  projectId: "pupil-tracker-f2a83"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let autoRefresh = null;
+
+/******** LOAD STUDENTS ********/
+function loadStudents() {
+  const table = document.getElementById("tbl");
+  const statusMsg = document.getElementById("statusMsg");
+
+  // Keep header row visible
+  table.innerHTML = `
+    <tr>
+      <th>Student ID</th>
+      <th>Connection Status</th>
+      <th>Dilated Minutes ≥ 25%</th>
+      <th>Dilated Minutes < 25%</th>
+    </tr>`;
+
+  db.ref("pupilData").once("value").then(snap => {
+    if (!snap.exists()) {
+      statusMsg.textContent = "⚠️ No student data available.";
+      return;
+    }
+
+    let allOffline = true;
+
+    snap.forEach(studentSnap => {
+      const sid = studentSnap.key;
+
+      // Collect entries into array and clean data
+      const entries = [];
+      studentSnap.forEach(child => {
+        const v = child.val();
+        if (!v || typeof v.timestamp === 'undefined' || typeof v.changePercent === 'undefined') return;
+
+        let ts = Number(v.timestamp);
+        if (ts < 1e12) ts *= 1000; // convert seconds → ms if needed
+
+        entries.push({ timestamp: ts, changePercent: Number(v.changePercent) });
+      });
+
+      if (entries.length === 0) {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${sid}</td><td class="status-inactive">Offline</td><td>0.00</td><td>0.00</td>`;
+        table.appendChild(row);
+        return;
+      }
+
+      // Sort ascending by time
+      entries.sort((a,b)=>a.timestamp - b.timestamp);
+
+      let totalAbove = 0, totalBelow = 0;
+      for (let i = 1; i < entries.length; i++) {
+        const prev = entries[i-1];
+        const cur = entries[i];
+        let diff = cur.timestamp - prev.timestamp;
+
+        // Ignore unrealistic gaps (>60s or negative)
+        if (diff <= 0 || diff > 60000) continue;
+
+        if (cur.changePercent >= 25) totalAbove += diff;
+        else totalBelow += diff;
+      }
+
+      const minAbove = (totalAbove / 60000).toFixed(2);
+      const minBelow = (totalBelow / 60000).toFixed(2);
+      const lastTimestamp = entries[entries.length - 1].timestamp;
+      const isActive = (Date.now() - lastTimestamp) < 10000;
+      const statusText = isActive ? "Connected" : "Offline";
+      const statusClass = isActive ? "status-active" : "status-inactive";
+
+      if (isActive) allOffline = false;
+
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td>${sid}</td>
+        <td class="${statusClass}">${statusText}</td>
+        <td>${minAbove}</td>
+        <td style="color:#ffae42;font-weight:bold">${minBelow}</td>
+      `;
+      table.appendChild(row);
+    });
+
+    if (allOffline) {
+      stopAutoRefresh();
+      statusMsg.textContent = "";
+    } else {
+      statusMsg.textContent = "";
+    }
+  }).catch(err => {
+    console.error(err);
+    statusMsg.textContent = "❌ Error loading data.";
+  });
+}
+
+/******** RESET DATABASE ********/
+function resetDatabase() {
+  if (!confirm("Are you sure you want to reset all student data?")) return;
+  db.ref("pupilData").remove()
+    .then(() => {
+      alert("All data has been reset successfully.");
+      loadStudents();
+    })
+    .catch(error => alert("Error resetting data: " + error));
+}
+
+/******** EXPORT TO EXCEL ********/
+function exportToExcel() {
+  const table = document.getElementById("tbl");
+  if (!table || table.rows.length === 1) {
+    alert("No data available to export.");
+    return;
+  }
+  const wb = XLSX.utils.table_to_book(table, { sheet: "Pupil Data" });
+  XLSX.writeFile(wb, "TeacherDashboard.xlsx");
+}
+
+/******** AUTO REFRESH CONTROL ********/
+function startAutoRefresh() {
+  if (!autoRefresh) autoRefresh = setInterval(loadStudents, 5000);
+}
+function stopAutoRefresh() {
+  if (autoRefresh) {
+    clearInterval(autoRefresh);
+    autoRefresh = null;
+    console.log("Auto refresh stopped.");
+  }
+}
+
+/******** INITIALIZE BUTTONS ********/
+document.getElementById("exportBtn").onclick = exportToExcel;
+document.getElementById("refreshBtn").onclick = loadStudents;
+document.getElementById("resetBtn").onclick = resetDatabase;
+
+loadStudents();
+startAutoRefresh();
+</script>
+</body>
+</html>
