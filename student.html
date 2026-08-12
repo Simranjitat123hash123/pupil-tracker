@@ -1,374 +1,804 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Pupil Dilation Tracker - Teacher Dashboard</title>
+<title>Student Experiment Portal</title>
 
+<script src="https://docs.opencv.org/4.x/opencv.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <style>
+*{box-sizing:border-box;}
 body{
-  margin:0;
-  font-family:Segoe UI,Arial;
+  font-family:Arial;
   background:linear-gradient(135deg,#1e3c72,#2a5298);
   color:white;
   text-align:center;
+  margin:0;
+  min-height:100vh;
+  overflow:hidden;
 }
-.container{max-width:1400px;margin:auto;padding:30px;}
-.card{background:rgba(255,255,255,0.1);padding:25px;border-radius:14px;margin-top:20px;overflow-x:auto;}
-.login-box{max-width:350px;margin:auto;margin-top:120px;background:rgba(255,255,255,0.1);padding:25px;border-radius:12px;}
-input{padding:10px;margin:10px;border:none;border-radius:6px;width:85%;}
-button{padding:10px 20px;border:none;border-radius:8px;background:#00c6ff;color:white;font-weight:bold;cursor:pointer;margin:8px;}
-.reset-btn{background:#ff4d4d;}
-table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
-th,td{padding:10px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.12);}
-th{background:rgba(255,255,255,0.2);}
-tr:nth-child(even){background:rgba(255,255,255,0.05);}
-.status-active{color:#00ff9d;font-weight:bold;}
-.status-inactive{color:#ff4d4d;font-weight:bold;}
-.note{font-size:13px;opacity:0.9;}
+.container{width:100%;max-width:100vw;margin:auto;padding:4px 8px;}
+h2{margin:4px 0;font-size:20px;}
+h3{margin:4px 0;font-size:17px;}
+p{margin:5px 0;}
+.card{
+  background:rgba(255,255,255,0.1);
+  padding:6px 10px;
+  border-radius:12px;
+  margin-top:4px;
+}
+input,select{
+  height:34px;
+  padding:5px 8px;
+  margin:3px;
+  width:330px;
+  max-width:90vw;
+  border:none;
+  border-radius:6px;
+  font-size:15px;
+}
+button{
+  padding:7px 14px;
+  margin:3px;
+  border:none;
+  border-radius:6px;
+  background:#00c6ff;
+  color:white;
+  font-weight:bold;
+  cursor:pointer;
+  font-size:15px;
+}
+#experimentCard{display:none;}
+#timer{font-size:20px;margin:4px 0;}
+#indicator{
+  width:14px;
+  height:14px;
+  border-radius:50%;
+  background:red;
+  margin:3px auto;
+}
+.metricBox{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  width:75vw;
+  max-width:1050px;
+  gap:6px;
+  margin:5px auto;
+}
+.metric{
+  background:rgba(0,0,0,0.18);
+  padding:5px;
+  border-radius:8px;
+  font-size:13px;
+}
+#wrap{
+  position:relative;
+  display:inline-block;
+  height:52vh;
+  width:auto;
+  max-width:82vw;
+  aspect-ratio:4/3;
+  margin-top:2px;
+}
+video,canvas{
+  width:100%;
+  height:100%;
+  border-radius:10px;
+  object-fit:cover;
+}
+canvas{
+  position:absolute;
+  top:0;
+  left:0;
+}
+#status{font-size:13px;margin:4px 0;}
+@media (max-height:760px){
+  #wrap{height:45vh;max-width:78vw;}
+  h2{font-size:18px;}
+  h3{font-size:15px;}
+  #timer{font-size:17px;}
+  .metric{font-size:12px;padding:4px;}
+}
+@media (max-width:700px){
+  body{overflow:auto;}
+  #wrap{width:94vw;height:auto;max-width:94vw;}
+  .metricBox{grid-template-columns:repeat(2,1fr);width:94vw;}
+}
 </style>
 </head>
 
 <body>
 
-<div id="loginPage" class="login-box">
-<h2>Teacher Login</h2>
-<input id="email" placeholder="Teacher Email"><br>
-<input id="password" type="password" placeholder="Password"><br>
-<button onclick="login()">Login</button>
-<p id="loginStatus"></p>
-</div>
-
-<div id="approvalPage" style="display:none">
 <div class="container">
-<h2>Student Permission Requests</h2>
-<div class="card">
-<table id="requestTable">
-<tr>
-<th>Name</th>
-<th>Email</th>
-<th>Approve</th>
-<th>Reject</th>
-</tr>
-</table>
-<button onclick="openDashboard()">Open Main Dashboard</button>
-</div>
-</div>
+
+<h2>Student Experiment Portal</h2>
+
+<div class="card" id="loginCard">
+  <h3>Request Experiment Access</h3>
+  <input id="name" placeholder="Student Name"><br>
+  <input id="email" placeholder="Gmail ID"><br>
+  <button onclick="requestPermission()">Request Permission</button>
+  <p id="msg"></p>
 </div>
 
-<div id="dashboard" style="display:none">
-<div class="container">
-<h2>Pupil Dilation Tracker – Teacher Dashboard</h2>
-<p class="note">Engagement threshold used for calculation: ≥1.25% pupil change from baseline.</p>
+<div class="card" id="experimentCard">
+  <h3>Pupil Tracking Experiment</h3>
 
-<div class="card">
-<button id="exportSummaryBtn">Export Summary Excel</button>
-<button id="exportRawBtn">Export Raw Log Excel</button>
-<button id="refreshBtn">Refresh Now</button>
-<button class="reset-btn" id="resetBtn">Reset All Data</button>
+  <input id="sid" placeholder="Enter Student ID"><br>
 
-<table id="tbl">
-<tr>
-<th>Student ID</th>
-<th>Connection Status</th>
-<th>Engaged ≥1.25% min</th>
-<th>Less Engaged &lt;1.25% min</th>
-<th>Latest Change %</th>
-<th>Latest FPS</th>
-<th>Latest Latency ms</th>
-<th>Detection Status</th>
-<th>Blink Event</th>
-<th>Frame Drop</th>
-<th>Lighting</th>
-<th>Last Sync</th>
-</tr>
-</table>
+  <select id="lightingCondition">
+    <option value="Normal Room Lighting">Normal Room Lighting</option>
+    <option value="Daytime Indoor Lighting">Daytime Indoor Lighting</option>
+    <option value="Low Lighting">Low Lighting</option>
+    <option value="Bright Lighting">Bright Lighting</option>
+  </select><br>
+
+  <button onclick="startSession()">Start Experiment</button>
+
+  <p id="timer">Time Remaining: 31:00</p>
+
+  <div id="indicator"></div>
+
+  <div class="metricBox">
+    <div class="metric">FPS: <span id="fpsView">0</span></div>
+    <div class="metric">Latency: <span id="latencyView">0</span> ms</div>
+    <div class="metric">Detection: <span id="detectView">Waiting</span></div>
+    <div class="metric">Engagement: <span id="engageView">Waiting</span></div>
+  </div>
+
+  <div id="wrap">
+    <video id="video" width="960" height="720" autoplay muted></video>
+    <canvas id="canvas" width="960" height="720"></canvas>
+  </div>
+
+  <p id="status">Waiting for session</p>
 </div>
-</div>
+
 </div>
 
 <script>
 
-firebase.initializeApp(firebaseConfig);
-const db=firebase.database();
 
-const ENGAGEMENT_THRESHOLD=1.25;
+/************************************************************
+ STUDENT PERMISSION REQUEST
+************************************************************/
+function requestPermission(){
+  const name = document.getElementById("name").value.trim();
+  const email = document.getElementById("email").value.trim();
 
-let autoRefresh=null;
-let loading=false;
-let latestSummaryRows=[];
-let latestRawRows=[];
+  if(name === "" || email === ""){
+    alert("Enter Name and Gmail");
+    return;
+  }
 
-/******** LOGIN ********/
-function login(){
-  const email=document.getElementById("email").value;
-  const password=document.getElementById("password").value;
+  const id = email.replace(/\./g,"_");
 
-  firebase.auth().signInWithEmailAndPassword(email,password)
-  .then(()=>{
-    document.getElementById("loginPage").style.display="none";
-    document.getElementById("approvalPage").style.display="block";
-    loadRequests();
-  })
-  .catch(error=>{
-    document.getElementById("loginStatus").innerText=error.message;
+  db.ref("studentRequests/" + id).set({
+    name: name,
+    email: email,
+    status: "pending",
+    request_timestamp: Date.now()
+  }).then(()=>{
+    document.getElementById("msg").innerText =
+      "Request sent to teacher. Waiting for approval...";
+    checkApproval(id);
+  }).catch(error=>{
+    console.error("Firebase error:", error);
+    alert("Error sending request");
   });
 }
 
-/******** LOAD STUDENT REQUESTS ********/
-function loadRequests(){
-  const table=document.getElementById("requestTable");
-  table.innerHTML=`
-  <tr>
-    <th>Name</th>
-    <th>Email</th>
-    <th>Approve</th>
-    <th>Reject</th>
-  </tr>`;
+function checkApproval(id){
+  db.ref("studentRequests/" + id + "/status").on("value", snap=>{
+    const status = snap.val();
 
-  db.ref("studentRequests").once("value").then(snapshot=>{
-    snapshot.forEach(child=>{
-      const data=child.val();
-      const id=child.key;
+    if(status === "approved"){
+      document.getElementById("loginCard").style.display = "none";
+      document.getElementById("experimentCard").style.display = "block";
+      document.getElementById("status").innerText =
+        "Access Approved. Click Start Experiment to begin.";
+    }
 
-      if(data.status==="pending"){
-        const row=document.createElement("tr");
-        row.innerHTML=`
-        <td>${data.name || ""}</td>
-        <td>${data.email || ""}</td>
-        <td><button onclick="approve('${id}','${data.name || ""}','${data.email || ""}')">Approve</button></td>
-        <td><button class="reset-btn" onclick="reject('${id}')">Reject</button></td>
-        `;
-        table.appendChild(row);
-      }
-    });
+    if(status === "rejected"){
+      document.getElementById("msg").innerText =
+        "Teacher rejected your request.";
+    }
   });
 }
 
-/******** APPROVE / REJECT STUDENT ********/
-function approve(id,name,email){
-  db.ref("approvedStudents").push({
-    name:name,
-    email:email,
-    approved_timestamp:Date.now()
-  });
+/************************************************************
+ EXPERIMENT VARIABLES
+************************************************************/
+let sessionActive = false;
+let studentId = null;
+let sessionId = null;
+let startTime = null;
 
-  db.ref("studentRequests/"+id+"/status").set("approved");
-  alert("Student Approved");
-  loadRequests();
+const BASELINE_DURATION = 60;       // 60 seconds baseline
+const LECTURE_DURATION = 1800;      // 30 minutes lecture
+const SESSION_DURATION = 1860;      // 31 minutes total
+
+const BLINK_TOLERANCE_MS = 1200;
+const SMOOTH_FACTOR = 0.95;
+const CHANGE_THRESHOLD = 0.7;
+
+// Change this for sensitivity analysis: 1.25
+const ENGAGEMENT_THRESHOLD = 1.25;
+
+let samples = [];
+let baseline = null;
+let calibrated = false;
+let ratioBuffer = [];
+let smoothRatio = null;
+let displayedChange = 0;
+let lastSent = 0;
+let lastValidData = null;
+let lastDetectionTime = 0;
+let camInstance = null;
+
+let frameCounter = 0;
+let lastFpsTime = Date.now();
+let fpsValue = 0;
+let previousFrameTime = Date.now();
+
+/************************************************************
+ START SESSION
+************************************************************/
+function startSession(){
+  studentId = document.getElementById("sid").value.trim();
+
+  if(!studentId){
+    alert("Enter Student ID");
+    return;
+  }
+
+  sessionActive = true;
+  sessionId = "S" + Date.now();
+  startTime = Date.now();
+
+  samples = [];
+  baseline = null;
+  calibrated = false;
+  ratioBuffer = [];
+  smoothRatio = null;
+  displayedChange = 0;
+  lastValidData = null;
+  lastDetectionTime = 0;
+  frameCounter = 0;
+  lastFpsTime = Date.now();
+  previousFrameTime = Date.now();
+
+  document.getElementById("status").innerText =
+    "Starting camera and 60-second baseline calibration...";
+
+  startCamera();
 }
 
-function reject(id){
-  db.ref("studentRequests/"+id+"/status").set("rejected");
-  alert("Student Rejected");
-  loadRequests();
-}
+/************************************************************
+ HELPER FUNCTIONS
+************************************************************/
+function updateFPS(){
+  frameCounter++;
+  const now = Date.now();
 
-/******** OPEN DASHBOARD ********/
-function openDashboard(){
-  document.getElementById("approvalPage").style.display="none";
-  document.getElementById("dashboard").style.display="block";
-  loadStudents();
-  startAutoRefresh();
-}
-
-/******** LOAD STUDENT DATA ********/
-function loadStudents(){
-  if(loading) return;
-  loading=true;
-
-  const table=document.getElementById("tbl");
-  table.innerHTML=`
-  <tr>
-    <th>Student ID</th>
-    <th>Connection Status</th>
-    <th>Engaged ≥1.25% min</th>
-    <th>Less Engaged &lt;1.25% min</th>
-    <th>Latest Change %</th>
-    <th>Latest FPS</th>
-    <th>Latest Latency ms</th>
-    <th>Detection Status</th>
-    <th>Blink Event</th>
-    <th>Frame Drop</th>
-    <th>Lighting</th>
-    <th>Last Sync</th>
-  </tr>`;
-
-  latestSummaryRows=[];
-  latestRawRows=[];
-
-  db.ref("pupilData").once("value").then(snap=>{
-    snap.forEach(studentSnap=>{
-      const sid=studentSnap.key;
-      const entries=[];
-
-      studentSnap.forEach(child=>{
-        const v=child.val() || {};
-        entries.push({
-          studentId:sid,
-          sessionId:v.sessionId || "",
-          timestamp:+v.timestamp || 0,
-          readable_time:v.readable_time || "",
-          session_time_sec:v.session_time_sec ?? "",
-          fps:v.fps ?? "",
-          processing_latency_ms:v.processing_latency_ms ?? "",
-          detection_status:v.detection_status ?? "",
-          blink_event:v.blink_event ?? "",
-          frame_drop:v.frame_drop ?? "",
-          lighting_condition:v.lighting_condition ?? "",
-          normalizedRatio:v.normalizedRatio ?? "",
-          baseline:v.baseline ?? "",
-          changePercent:v.changePercent,
-          engagement_threshold_percent:v.engagement_threshold_percent ?? ENGAGEMENT_THRESHOLD,
-          engagement_status:v.engagement_status ?? ""
-        });
-      });
-
-      entries.sort((a,b)=>a.timestamp-b.timestamp);
-
-      let engagedMs=0;
-      let lessEngagedMs=0;
-
-      for(let i=1;i<entries.length;i++){
-        const prev=entries[i-1];
-        const current=entries[i];
-
-        const diff=current.timestamp-prev.timestamp;
-
-        // Ignore abnormal gaps.
-        if(diff<=0 || diff>2000) continue;
-
-        const change=Number(current.changePercent);
-
-        if(!Number.isFinite(change)) continue;
-
-        if(change>=ENGAGEMENT_THRESHOLD){
-          engagedMs+=diff;
-        } else {
-          lessEngagedMs+=diff;
-        }
-      }
-
-      const latest=entries[entries.length-1] || {};
-      const active=latest.timestamp ? (Date.now()-latest.timestamp)<15000 : false;
-
-      const summary={
-        Student_ID:sid,
-        Connection_Status:active ? "Connected" : "Offline",
-        Engaged_Min:(engagedMs/60000).toFixed(2),
-        Less_Engaged_Min:(lessEngagedMs/60000).toFixed(2),
-        Latest_Change_Percent:formatNum(latest.changePercent,2),
-        Latest_FPS:latest.fps ?? "",
-        Latest_Latency_ms:latest.processing_latency_ms ?? "",
-        Detection_Status:latest.detection_status ?? "",
-        Blink_Event:latest.blink_event ?? "",
-        Frame_Drop:latest.frame_drop ?? "",
-        Lighting_Condition:latest.lighting_condition ?? "",
-        Last_Sync:latest.readable_time || formatDate(latest.timestamp)
-      };
-
-      latestSummaryRows.push(summary);
-
-      entries.forEach(e=>{
-        latestRawRows.push({
-          Student_ID:e.studentId,
-          Session_ID:e.sessionId,
-          Timestamp:e.timestamp,
-          Readable_Time:e.readable_time || formatDate(e.timestamp),
-          Session_Time_sec:e.session_time_sec,
-          FPS:e.fps,
-          Processing_Latency_ms:e.processing_latency_ms,
-          Detection_Status:e.detection_status,
-          Blink_Event:e.blink_event,
-          Frame_Drop:e.frame_drop,
-          Lighting_Condition:e.lighting_condition,
-          Normalized_Ratio:e.normalizedRatio,
-          Baseline:e.baseline,
-          Pupil_Change_Percent:e.changePercent,
-          Engagement_Threshold_Percent:e.engagement_threshold_percent,
-          Engagement_Status:e.engagement_status
-        });
-      });
-
-      addRow(summary,active);
-    });
-  }).finally(()=>loading=false);
-}
-
-function addRow(summary,active){
-  const table=document.getElementById("tbl");
-  const row=document.createElement("tr");
-
-  row.innerHTML=`
-  <td>${summary.Student_ID}</td>
-  <td class="${active?"status-active":"status-inactive"}">${summary.Connection_Status}</td>
-  <td>${summary.Engaged_Min}</td>
-  <td>${summary.Less_Engaged_Min}</td>
-  <td>${summary.Latest_Change_Percent}</td>
-  <td>${summary.Latest_FPS}</td>
-  <td>${summary.Latest_Latency_ms}</td>
-  <td>${summary.Detection_Status}</td>
-  <td>${summary.Blink_Event}</td>
-  <td>${summary.Frame_Drop}</td>
-  <td>${summary.Lighting_Condition}</td>
-  <td>${summary.Last_Sync}</td>
-  `;
-  table.appendChild(row);
-}
-
-function formatNum(value,digits){
-  const n=Number(value);
-  if(!Number.isFinite(n)) return "";
-  return n.toFixed(digits);
-}
-
-function formatDate(ts){
-  if(!ts) return "";
-  return new Date(ts).toLocaleString();
-}
-
-/******** RESET DATABASE ********/
-function resetDatabase(){
-  if(!confirm("Reset all pupil data?")) return;
-  db.ref("pupilData").remove().then(()=>{
-    alert("Pupil data cleared");
-    loadStudents();
-  });
-}
-
-/******** EXPORT EXCEL ********/
-function exportSummaryToExcel(){
-  const ws=XLSX.utils.json_to_sheet(latestSummaryRows);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Summary");
-  XLSX.writeFile(wb,"TeacherDashboard_Summary.xlsx");
-}
-
-function exportRawToExcel(){
-  const ws=XLSX.utils.json_to_sheet(latestRawRows);
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,ws,"Raw_Log");
-  XLSX.writeFile(wb,"TeacherDashboard_Raw_Log.xlsx");
-}
-
-/******** AUTO REFRESH ********/
-function startAutoRefresh(){
-  if(!autoRefresh){
-    autoRefresh=setInterval(loadStudents,7000);
+  if(now - lastFpsTime >= 1000){
+    fpsValue = frameCounter;
+    frameCounter = 0;
+    lastFpsTime = now;
+    document.getElementById("fpsView").innerText = fpsValue;
   }
 }
 
-/******** BUTTON EVENTS ********/
-document.getElementById("exportSummaryBtn").onclick=exportSummaryToExcel;
-document.getElementById("exportRawBtn").onclick=exportRawToExcel;
-document.getElementById("refreshBtn").onclick=loadStudents;
-document.getElementById("resetBtn").onclick=resetDatabase;
+function getFrameDrop(){
+  const now = Date.now();
+  const gap = now - previousFrameTime;
+  previousFrameTime = now;
+  return gap > 250;
+}
+
+function engagementStatus(changePercent){
+  if(!calibrated) return "Calibrating";
+
+  return changePercent >= ENGAGEMENT_THRESHOLD
+    ? "Engaged"
+    : "Less Engaged";
+}
+
+function sendFirebaseRecord(record){
+  db.ref("pupilData/" + studentId + "/" + Date.now()).set(record);
+}
+
+/************************************************************
+ CAMERA + MEDIAPIPE + OPENCV PUPIL TRACKING
+************************************************************/
+function startCamera(){
+  const video = document.getElementById("video");
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d");
+  const indicator = document.getElementById("indicator");
+
+  navigator.mediaDevices.getUserMedia({ video:true })
+  .then(stream=>{
+    video.srcObject = stream;
+
+    const faceMesh = new FaceMesh({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+    });
+
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+
+    faceMesh.onResults(results=>{
+      if(!sessionActive) return;
+
+      const frameStart = performance.now();
+      updateFPS();
+      const frameDrop = getFrameDrop();
+
+      let detectionStatus = "Not Detected";
+      let blinkEvent = false;
+      let currentEngagement = "Waiting";
+      let latencyValue = 0;
+
+      try{
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(results.image,0,0,canvas.width,canvas.height);
+
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const remaining = SESSION_DURATION - elapsed;
+        const lectureTimeSec = Math.max(0, elapsed - BASELINE_DURATION);
+
+        if(remaining <= 0){
+          sessionActive = false;
+
+          if(video.srcObject){
+            video.srcObject.getTracks().forEach(t=>t.stop());
+          }
+
+          document.getElementById("status").innerText = "Session Completed";
+          document.getElementById("timer").innerText = "Time Remaining: 00:00";
+          return;
+        }
+
+        const m = String(Math.floor(remaining / 60)).padStart(2,'0');
+        const s = String(remaining % 60).padStart(2,'0');
+        document.getElementById("timer").innerText =
+          `Time Remaining: ${m}:${s}`;
+
+        if(!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0){
+
+          if(Date.now() - lastDetectionTime < BLINK_TOLERANCE_MS && lastValidData){
+            blinkEvent = true;
+            detectionStatus = "Blink Tolerance";
+            useLastData();
+          } else {
+            indicator.style.background = "red";
+            detectionStatus = "Face Not Detected";
+            document.getElementById("status").innerText = "Face not detected...";
+          }
+
+          latencyValue = Math.round(performance.now() - frameStart);
+          updateMetricViews(latencyValue,detectionStatus,currentEngagement);
+
+          if(Date.now() - lastSent > 1000){
+            lastSent = Date.now();
+
+            sendFirebaseRecord({
+              sessionId,
+              studentId,
+              timestamp: Date.now(),
+              readable_time: new Date().toLocaleString(),
+              session_time_sec: elapsed,
+              lecture_time_sec: lectureTimeSec,
+              timeRemaining: remaining,
+              fps: fpsValue,
+              processing_latency_ms: latencyValue,
+              detection_status: detectionStatus,
+              blink_event: blinkEvent,
+              frame_drop: frameDrop,
+              lighting_condition: document.getElementById("lightingCondition").value,
+              normalizedRatio: null,
+              baseline: baseline,
+              changePercent: null,
+              engagement_threshold_percent: ENGAGEMENT_THRESHOLD,
+              engagement_status: "Not Available"
+            });
+          }
+
+          return;
+        }
+
+        const lm = results.multiFaceLandmarks[0];
+
+        const left = [468,469,470,471,472];
+        const right = [473,474,475,476,477];
+
+        function irisData(ids){
+          const xs = [];
+          const ys = [];
+
+          ids.forEach(i=>{
+            if(lm[i]){
+              xs.push(lm[i].x * canvas.width);
+              ys.push(lm[i].y * canvas.height);
+            }
+          });
+
+          if(xs.length < 3) return null;
+
+          const cx = xs.reduce((a,b)=>a+b) / xs.length;
+          const cy = ys.reduce((a,b)=>a+b) / ys.length;
+          const r = (Math.max(...xs) - Math.min(...xs)) / 2;
+
+          return {cx,cy,r};
+        }
+
+        function detectPupil(data){
+          if(!data || !data.r) return null;
+
+          const size = Math.round(data.r * 4.4);
+
+          if(size < 24){
+            return {
+              r: data.r * 0.22,
+              cx: data.cx,
+              cy: data.cy,
+              fallback: true
+            };
+          }
+
+          const x = Math.max(
+            0,
+            Math.min(canvas.width - size, Math.round(data.cx - size / 2))
+          );
+
+          const y = Math.max(
+            0,
+            Math.min(canvas.height - size, Math.round(data.cy - size / 2))
+          );
+
+          const src = cv.imread(canvas);
+          const roi = src.roi(new cv.Rect(x, y, size, size));
+
+          const gray = new cv.Mat();
+          cv.cvtColor(roi, gray, cv.COLOR_RGBA2GRAY);
+
+          const clahe = new cv.CLAHE(1.5, new cv.Size(8,8));
+          clahe.apply(gray, gray);
+
+          cv.GaussianBlur(gray, gray, new cv.Size(3,3), 0);
+
+          const darkThresh = new cv.Mat();
+          const adaptive = new cv.Mat();
+          const combined = new cv.Mat();
+
+          cv.threshold(gray, darkThresh, 65, 255, cv.THRESH_BINARY_INV);
+
+          cv.adaptiveThreshold(
+            gray,
+            adaptive,
+            255,
+            cv.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv.THRESH_BINARY_INV,
+            21,
+            4
+          );
+
+          cv.bitwise_or(darkThresh, adaptive, combined);
+
+          const kernel = cv.Mat.ones(2, 2, cv.CV_8U);
+          cv.morphologyEx(combined, combined, cv.MORPH_CLOSE, kernel);
+
+          const contours = new cv.MatVector();
+          const hier = new cv.Mat();
+
+          cv.findContours(
+            combined,
+            contours,
+            hier,
+            cv.RETR_EXTERNAL,
+            cv.CHAIN_APPROX_SIMPLE
+          );
+
+          let best = null;
+          let bestScore = -Infinity;
+
+          for(let i=0; i<contours.size(); i++){
+            const cnt = contours.get(i);
+            const area = cv.contourArea(cnt);
+
+            if(area > 5){
+              const circle = cv.minEnclosingCircle(cnt);
+
+              const globalCx = circle.center.x + x;
+              const globalCy = circle.center.y + y;
+
+              const dx = globalCx - data.cx;
+              const dy = globalCy - data.cy;
+              const dist = Math.sqrt(dx*dx + dy*dy);
+
+              const validRadius =
+                circle.radius > data.r * 0.06 &&
+                circle.radius < data.r * 0.55;
+
+              const nearCenter = dist < data.r * 1.25;
+
+              const validArea =
+                area > data.r * data.r * 0.01 &&
+                area < data.r * data.r * 6.0;
+
+              if(validRadius && nearCenter && validArea){
+                const score = area - dist * 1.5;
+
+                if(score > bestScore){
+                  bestScore = score;
+                  best = {
+                    r: circle.radius,
+                    cx: globalCx,
+                    cy: globalCy,
+                    fallback: false
+                  };
+                }
+              }
+            }
+
+            cnt.delete();
+          }
+
+          roi.delete();
+          gray.delete();
+          darkThresh.delete();
+          adaptive.delete();
+          combined.delete();
+          kernel.delete();
+          contours.delete();
+          hier.delete();
+          src.delete();
+
+          if(!best){
+            best = {
+              r: data.r * 0.18,
+              cx: data.cx,
+              cy: data.cy,
+              fallback: true
+            };
+          }
+
+          return best;
+        }
+
+        function drawCross(cx,cy,size=5,color="lime"){
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(cx-size,cy);
+          ctx.lineTo(cx+size,cy);
+          ctx.moveTo(cx,cy-size);
+          ctx.lineTo(cx,cy+size);
+          ctx.stroke();
+        }
+
+        function processEye(ids){
+          const iris = irisData(ids);
+          if(!iris) return null;
+
+          ctx.beginPath();
+          ctx.arc(iris.cx, iris.cy, iris.r + 2, 0, 2*Math.PI);
+          ctx.strokeStyle = "yellow";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          const pupil = detectPupil({...iris});
+
+          if(pupil){
+            const pupilColor = pupil.fallback ? "cyan" : "lime";
+
+            ctx.beginPath();
+            ctx.arc(pupil.cx, pupil.cy, pupil.r, 0, 2*Math.PI);
+            ctx.strokeStyle = pupilColor;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = pupil.fallback
+              ? "rgba(0,255,255,0.20)"
+              : "rgba(0,255,0,0.25)";
+
+            ctx.beginPath();
+            ctx.arc(pupil.cx, pupil.cy, pupil.r, 0, 2*Math.PI);
+            ctx.fill();
+
+            drawCross(pupil.cx,pupil.cy,5,pupilColor);
+          }
+
+          return {iris,pupil};
+        }
+
+        const L = processEye(left);
+        const R = processEye(right);
+
+        const eyesDetected = L && L.pupil && R && R.pupil;
+
+        if(eyesDetected){
+          indicator.style.background = "limegreen";
+          detectionStatus = "Detected";
+
+          let ratio = ((L.pupil.r / L.iris.r) + (R.pupil.r / R.iris.r)) / 2;
+
+          if(smoothRatio === null) smoothRatio = ratio;
+
+          smoothRatio =
+            SMOOTH_FACTOR * smoothRatio + (1 - SMOOTH_FACTOR) * ratio;
+
+          ratioBuffer.push(smoothRatio);
+
+          if(ratioBuffer.length > 10){
+            ratioBuffer.shift();
+          }
+
+          const avgRatio =
+            ratioBuffer.reduce((a,b)=>a+b) / ratioBuffer.length;
+
+          /************************************************************
+           60-SECOND BASELINE CALIBRATION
+          ************************************************************/
+          if(!calibrated && elapsed <= BASELINE_DURATION){
+            samples.push(avgRatio);
+
+            document.getElementById("status").innerText =
+              `Baseline calibration running: ${BASELINE_DURATION - elapsed} sec remaining`;
+          }
+
+          if(!calibrated && elapsed > BASELINE_DURATION && samples.length > 0){
+            baseline = samples.reduce((a,b)=>a+b) / samples.length;
+            calibrated = true;
+
+            document.getElementById("status").innerText =
+              "Baseline calibration completed. Engagement tracking started.";
+          }
+
+          let change = calibrated
+            ? ((avgRatio - baseline) / baseline) * 100
+            : 0;
+
+          if(Math.abs(change) < CHANGE_THRESHOLD){
+            change = 0;
+          }
+
+          displayedChange =
+            0.9 * displayedChange + 0.1 * change;
+
+          currentEngagement = engagementStatus(displayedChange);
+
+          if(calibrated){
+            document.getElementById("status").innerText =
+              `Normalized Ratio: ${avgRatio.toFixed(3)} | Baseline: ${baseline.toFixed(3)} | Change: ${displayedChange.toFixed(2)} %`;
+          }
+
+          lastValidData = {
+            ratio: avgRatio,
+            baseline: baseline,
+            change: displayedChange,
+            remaining: remaining
+          };
+
+          lastDetectionTime = Date.now();
+
+          latencyValue = Math.round(performance.now() - frameStart);
+          updateMetricViews(latencyValue,detectionStatus,currentEngagement);
+
+          if(Date.now() - lastSent > 1000){
+            lastSent = Date.now();
+
+            sendFirebaseRecord({
+              sessionId,
+              studentId,
+              timestamp: Date.now(),
+              readable_time: new Date().toLocaleString(),
+              session_time_sec: elapsed,
+              lecture_time_sec: lectureTimeSec,
+              timeRemaining: remaining,
+
+              fps: fpsValue,
+              processing_latency_ms: latencyValue,
+              detection_status: detectionStatus,
+              blink_event: false,
+              frame_drop: frameDrop,
+              lighting_condition: document.getElementById("lightingCondition").value,
+
+              normalizedRatio: avgRatio,
+              baseline: baseline,
+              changePercent: calibrated ? displayedChange : null,
+              engagement_threshold_percent: ENGAGEMENT_THRESHOLD,
+              engagement_status: calibrated ? currentEngagement : "Calibrating"
+            });
+          }
+
+        } else {
+
+          if(Date.now() - lastDetectionTime < BLINK_TOLERANCE_MS && lastValidData){
+            blinkEvent = true;
+            detectionStatus = "Blink Tolerance";
+            useLastData();
+          } else {
+            indicator.style.background = "red";
+            detectionStatus = "Eyes/Pupil Not Detected";
+            document.getElementById("status").innerText =
+              "Eyes or pupil not detected...";
+          }
+
+          latencyValue = Math.round(performance.now() - frameStart);
+          updateMetricViews(latencyValue,detectionStatus,"Not Available");
+
+          if(Date.now() - lastSent > 1000){
+            lastSent = Date.now();
+
+            sendFirebaseRecord({
+              sessionId,
+              studentId,
+              timestamp: Date.now(),
+              readable_time: new Date().toLocaleString(),
+              session_time_sec: elapsed,
+              lecture_time_sec: lectureTimeSec,
+              timeRemaining: remaining,
+
+              fps: fpsValue,
+              processing_latency_ms: latencyValue,
+              detection_status: detectionStatus,
+              blink_event: blinkEvent,
+              frame_drop: frameDrop,
+              lighting_condition: document.getElementById("lightingCondition").value,
+
+              normalizedRatio: null,
+              baseline: baseline,
+              changePercent: null,
+              engagement_threshold_percent: ENGAGEMENT_THRESHOLD,
+              engagement_status: "Not Available"
+            });
+          }
+        }
+
+      } catch(e){
+        console.error(e);
+      }
+
+      function useLastData(){
+        indicator.style.background = "limegreen";
+        currentEngagement = engagementStatus(displayedChange);
+
+        document.getElementById("status").innerText =
+          `Blink tolerance active | Last Change: ${displayedChange.toFixed(2)} %`;
+      }
+
+      function updateMetricViews(latency,detection,engagement){
+        document.getElementById("latencyView").innerText = latency;
+        document.getElementById("detectView").innerText = detection;
+        document.getElementById("engageView").innerText = engagement;
+      }
+
+    });
+
+    camInstance = new Camera(video,{
+      onFrame: async()=> await faceMesh.send({image:video}),
+      width:960,
+      height:720
+    });
+
+    camInstance.start();
+
+  }).catch(err=>{
+    alert("Camera permission required");
+    console.error(err);
+  });
+}
 
 </script>
 </body>
 </html>
-
