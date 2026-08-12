@@ -1,1 +1,374 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Pupil Dilation Tracker - Teacher Dashboard</title>
+
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+body{
+  margin:0;
+  font-family:Segoe UI,Arial;
+  background:linear-gradient(135deg,#1e3c72,#2a5298);
+  color:white;
+  text-align:center;
+}
+.container{max-width:1400px;margin:auto;padding:30px;}
+.card{background:rgba(255,255,255,0.1);padding:25px;border-radius:14px;margin-top:20px;overflow-x:auto;}
+.login-box{max-width:350px;margin:auto;margin-top:120px;background:rgba(255,255,255,0.1);padding:25px;border-radius:12px;}
+input{padding:10px;margin:10px;border:none;border-radius:6px;width:85%;}
+button{padding:10px 20px;border:none;border-radius:8px;background:#00c6ff;color:white;font-weight:bold;cursor:pointer;margin:8px;}
+.reset-btn{background:#ff4d4d;}
+table{width:100%;border-collapse:collapse;margin-top:10px;font-size:13px;}
+th,td{padding:10px;text-align:center;border-bottom:1px solid rgba(255,255,255,0.12);}
+th{background:rgba(255,255,255,0.2);}
+tr:nth-child(even){background:rgba(255,255,255,0.05);}
+.status-active{color:#00ff9d;font-weight:bold;}
+.status-inactive{color:#ff4d4d;font-weight:bold;}
+.note{font-size:13px;opacity:0.9;}
+</style>
+</head>
+
+<body>
+
+<div id="loginPage" class="login-box">
+<h2>Teacher Login</h2>
+<input id="email" placeholder="Teacher Email"><br>
+<input id="password" type="password" placeholder="Password"><br>
+<button onclick="login()">Login</button>
+<p id="loginStatus"></p>
+</div>
+
+<div id="approvalPage" style="display:none">
+<div class="container">
+<h2>Student Permission Requests</h2>
+<div class="card">
+<table id="requestTable">
+<tr>
+<th>Name</th>
+<th>Email</th>
+<th>Approve</th>
+<th>Reject</th>
+</tr>
+</table>
+<button onclick="openDashboard()">Open Main Dashboard</button>
+</div>
+</div>
+</div>
+
+<div id="dashboard" style="display:none">
+<div class="container">
+<h2>Pupil Dilation Tracker – Teacher Dashboard</h2>
+<p class="note">Engagement threshold used for calculation: ≥1.25% pupil change from baseline.</p>
+
+<div class="card">
+<button id="exportSummaryBtn">Export Summary Excel</button>
+<button id="exportRawBtn">Export Raw Log Excel</button>
+<button id="refreshBtn">Refresh Now</button>
+<button class="reset-btn" id="resetBtn">Reset All Data</button>
+
+<table id="tbl">
+<tr>
+<th>Student ID</th>
+<th>Connection Status</th>
+<th>Engaged ≥1.25% min</th>
+<th>Less Engaged &lt;1.25% min</th>
+<th>Latest Change %</th>
+<th>Latest FPS</th>
+<th>Latest Latency ms</th>
+<th>Detection Status</th>
+<th>Blink Event</th>
+<th>Frame Drop</th>
+<th>Lighting</th>
+<th>Last Sync</th>
+</tr>
+</table>
+</div>
+</div>
+</div>
+
+<script>
+
+firebase.initializeApp(firebaseConfig);
+const db=firebase.database();
+
+const ENGAGEMENT_THRESHOLD=1.25;
+
+let autoRefresh=null;
+let loading=false;
+let latestSummaryRows=[];
+let latestRawRows=[];
+
+/******** LOGIN ********/
+function login(){
+  const email=document.getElementById("email").value;
+  const password=document.getElementById("password").value;
+
+  firebase.auth().signInWithEmailAndPassword(email,password)
+  .then(()=>{
+    document.getElementById("loginPage").style.display="none";
+    document.getElementById("approvalPage").style.display="block";
+    loadRequests();
+  })
+  .catch(error=>{
+    document.getElementById("loginStatus").innerText=error.message;
+  });
+}
+
+/******** LOAD STUDENT REQUESTS ********/
+function loadRequests(){
+  const table=document.getElementById("requestTable");
+  table.innerHTML=`
+  <tr>
+    <th>Name</th>
+    <th>Email</th>
+    <th>Approve</th>
+    <th>Reject</th>
+  </tr>`;
+
+  db.ref("studentRequests").once("value").then(snapshot=>{
+    snapshot.forEach(child=>{
+      const data=child.val();
+      const id=child.key;
+
+      if(data.status==="pending"){
+        const row=document.createElement("tr");
+        row.innerHTML=`
+        <td>${data.name || ""}</td>
+        <td>${data.email || ""}</td>
+        <td><button onclick="approve('${id}','${data.name || ""}','${data.email || ""}')">Approve</button></td>
+        <td><button class="reset-btn" onclick="reject('${id}')">Reject</button></td>
+        `;
+        table.appendChild(row);
+      }
+    });
+  });
+}
+
+/******** APPROVE / REJECT STUDENT ********/
+function approve(id,name,email){
+  db.ref("approvedStudents").push({
+    name:name,
+    email:email,
+    approved_timestamp:Date.now()
+  });
+
+  db.ref("studentRequests/"+id+"/status").set("approved");
+  alert("Student Approved");
+  loadRequests();
+}
+
+function reject(id){
+  db.ref("studentRequests/"+id+"/status").set("rejected");
+  alert("Student Rejected");
+  loadRequests();
+}
+
+/******** OPEN DASHBOARD ********/
+function openDashboard(){
+  document.getElementById("approvalPage").style.display="none";
+  document.getElementById("dashboard").style.display="block";
+  loadStudents();
+  startAutoRefresh();
+}
+
+/******** LOAD STUDENT DATA ********/
+function loadStudents(){
+  if(loading) return;
+  loading=true;
+
+  const table=document.getElementById("tbl");
+  table.innerHTML=`
+  <tr>
+    <th>Student ID</th>
+    <th>Connection Status</th>
+    <th>Engaged ≥1.25% min</th>
+    <th>Less Engaged &lt;1.25% min</th>
+    <th>Latest Change %</th>
+    <th>Latest FPS</th>
+    <th>Latest Latency ms</th>
+    <th>Detection Status</th>
+    <th>Blink Event</th>
+    <th>Frame Drop</th>
+    <th>Lighting</th>
+    <th>Last Sync</th>
+  </tr>`;
+
+  latestSummaryRows=[];
+  latestRawRows=[];
+
+  db.ref("pupilData").once("value").then(snap=>{
+    snap.forEach(studentSnap=>{
+      const sid=studentSnap.key;
+      const entries=[];
+
+      studentSnap.forEach(child=>{
+        const v=child.val() || {};
+        entries.push({
+          studentId:sid,
+          sessionId:v.sessionId || "",
+          timestamp:+v.timestamp || 0,
+          readable_time:v.readable_time || "",
+          session_time_sec:v.session_time_sec ?? "",
+          fps:v.fps ?? "",
+          processing_latency_ms:v.processing_latency_ms ?? "",
+          detection_status:v.detection_status ?? "",
+          blink_event:v.blink_event ?? "",
+          frame_drop:v.frame_drop ?? "",
+          lighting_condition:v.lighting_condition ?? "",
+          normalizedRatio:v.normalizedRatio ?? "",
+          baseline:v.baseline ?? "",
+          changePercent:v.changePercent,
+          engagement_threshold_percent:v.engagement_threshold_percent ?? ENGAGEMENT_THRESHOLD,
+          engagement_status:v.engagement_status ?? ""
+        });
+      });
+
+      entries.sort((a,b)=>a.timestamp-b.timestamp);
+
+      let engagedMs=0;
+      let lessEngagedMs=0;
+
+      for(let i=1;i<entries.length;i++){
+        const prev=entries[i-1];
+        const current=entries[i];
+
+        const diff=current.timestamp-prev.timestamp;
+
+        // Ignore abnormal gaps.
+        if(diff<=0 || diff>2000) continue;
+
+        const change=Number(current.changePercent);
+
+        if(!Number.isFinite(change)) continue;
+
+        if(change>=ENGAGEMENT_THRESHOLD){
+          engagedMs+=diff;
+        } else {
+          lessEngagedMs+=diff;
+        }
+      }
+
+      const latest=entries[entries.length-1] || {};
+      const active=latest.timestamp ? (Date.now()-latest.timestamp)<15000 : false;
+
+      const summary={
+        Student_ID:sid,
+        Connection_Status:active ? "Connected" : "Offline",
+        Engaged_Min:(engagedMs/60000).toFixed(2),
+        Less_Engaged_Min:(lessEngagedMs/60000).toFixed(2),
+        Latest_Change_Percent:formatNum(latest.changePercent,2),
+        Latest_FPS:latest.fps ?? "",
+        Latest_Latency_ms:latest.processing_latency_ms ?? "",
+        Detection_Status:latest.detection_status ?? "",
+        Blink_Event:latest.blink_event ?? "",
+        Frame_Drop:latest.frame_drop ?? "",
+        Lighting_Condition:latest.lighting_condition ?? "",
+        Last_Sync:latest.readable_time || formatDate(latest.timestamp)
+      };
+
+      latestSummaryRows.push(summary);
+
+      entries.forEach(e=>{
+        latestRawRows.push({
+          Student_ID:e.studentId,
+          Session_ID:e.sessionId,
+          Timestamp:e.timestamp,
+          Readable_Time:e.readable_time || formatDate(e.timestamp),
+          Session_Time_sec:e.session_time_sec,
+          FPS:e.fps,
+          Processing_Latency_ms:e.processing_latency_ms,
+          Detection_Status:e.detection_status,
+          Blink_Event:e.blink_event,
+          Frame_Drop:e.frame_drop,
+          Lighting_Condition:e.lighting_condition,
+          Normalized_Ratio:e.normalizedRatio,
+          Baseline:e.baseline,
+          Pupil_Change_Percent:e.changePercent,
+          Engagement_Threshold_Percent:e.engagement_threshold_percent,
+          Engagement_Status:e.engagement_status
+        });
+      });
+
+      addRow(summary,active);
+    });
+  }).finally(()=>loading=false);
+}
+
+function addRow(summary,active){
+  const table=document.getElementById("tbl");
+  const row=document.createElement("tr");
+
+  row.innerHTML=`
+  <td>${summary.Student_ID}</td>
+  <td class="${active?"status-active":"status-inactive"}">${summary.Connection_Status}</td>
+  <td>${summary.Engaged_Min}</td>
+  <td>${summary.Less_Engaged_Min}</td>
+  <td>${summary.Latest_Change_Percent}</td>
+  <td>${summary.Latest_FPS}</td>
+  <td>${summary.Latest_Latency_ms}</td>
+  <td>${summary.Detection_Status}</td>
+  <td>${summary.Blink_Event}</td>
+  <td>${summary.Frame_Drop}</td>
+  <td>${summary.Lighting_Condition}</td>
+  <td>${summary.Last_Sync}</td>
+  `;
+  table.appendChild(row);
+}
+
+function formatNum(value,digits){
+  const n=Number(value);
+  if(!Number.isFinite(n)) return "";
+  return n.toFixed(digits);
+}
+
+function formatDate(ts){
+  if(!ts) return "";
+  return new Date(ts).toLocaleString();
+}
+
+/******** RESET DATABASE ********/
+function resetDatabase(){
+  if(!confirm("Reset all pupil data?")) return;
+  db.ref("pupilData").remove().then(()=>{
+    alert("Pupil data cleared");
+    loadStudents();
+  });
+}
+
+/******** EXPORT EXCEL ********/
+function exportSummaryToExcel(){
+  const ws=XLSX.utils.json_to_sheet(latestSummaryRows);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Summary");
+  XLSX.writeFile(wb,"TeacherDashboard_Summary.xlsx");
+}
+
+function exportRawToExcel(){
+  const ws=XLSX.utils.json_to_sheet(latestRawRows);
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,"Raw_Log");
+  XLSX.writeFile(wb,"TeacherDashboard_Raw_Log.xlsx");
+}
+
+/******** AUTO REFRESH ********/
+function startAutoRefresh(){
+  if(!autoRefresh){
+    autoRefresh=setInterval(loadStudents,7000);
+  }
+}
+
+/******** BUTTON EVENTS ********/
+document.getElementById("exportSummaryBtn").onclick=exportSummaryToExcel;
+document.getElementById("exportRawBtn").onclick=exportRawToExcel;
+document.getElementById("refreshBtn").onclick=loadStudents;
+document.getElementById("resetBtn").onclick=resetDatabase;
+
+</script>
+</body>
+</html>
 
